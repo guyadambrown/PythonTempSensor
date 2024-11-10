@@ -1,0 +1,10 @@
+proxmox:
+  enabled: False
+  server_ip: ""
+  username: "root@pam"
+  password: ""
+  verify_ssl: False
+  node: ""
+
+temperature:
+  limit: 50  # Temperature limit in degrees Celsius
