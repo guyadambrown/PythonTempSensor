@@ -8,3 +8,6 @@ proxmox:
 
 temperature:
   limit: 50  # Temperature limit in degrees Celsius
+
+web:
+  port: 5050
