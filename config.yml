@@ -11,3 +11,7 @@ temperature:
 
 web:
   port: 5050
+
+thingspeak:
+  enabled: True
+  temp_channel_id: "2737753"
