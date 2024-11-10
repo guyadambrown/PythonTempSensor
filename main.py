@@ -29,6 +29,9 @@ with open("config.yml", "r") as config_file:
     # Temperature
     temperature_config = config['temperature']
     max_temp = temperature_config['limit']
+    # Web Server
+    web_config = config['web']
+    port = web_config['port']
 
 try:
     # LCD 16x2 Characters
@@ -79,8 +82,7 @@ async def display_temp_info(update_delay):
         temperature, humidity = read_temp()
         logger.info(f"Temperature: {temperature} C, Humidity: {humidity} %")
         if lcd:
-            lcd.clear()
-            display_text(0, f"Temperature: {temperature} C")
+            display_text(0, f"Temp: {temperature}C")
             display_text(1, f"Humidity: {humidity} %")
         
         await asyncio.sleep(update_delay)
@@ -103,7 +105,7 @@ async def main():
     await asyncio.gather(display_temp_info(5), proxmox_temp_monitor(5))
 
 def run_flask_app():
-    app.run(host='0.0.0.0', port=5000)
+    app.run(host='0.0.0.0', port=port)
 
 if __name__ == '__main__':
     flask_thread = threading.Thread(target=run_flask_app)
