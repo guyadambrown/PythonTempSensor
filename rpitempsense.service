@@ -1,0 +1,13 @@
+[Unit]
+Description=Run Python Script
+After=network.target
+
+[Service]
+User=guyb
+Group=guyb
+ExecStart=/bin/bash /home/guyb/python/run.sh
+WorkingDirectory=/home/guyb/python
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
