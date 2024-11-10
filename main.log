@@ -1,0 +1,11 @@
+2024-11-10 15:00:47,842 - RPI-Temperature-Monitor - ERROR - Failed to initialize LCD display: [Errno 5] Input/output error
+2024-11-10 15:00:48,291 - RPI-Temperature-Monitor - INFO - Temperature: 20 C, Humidity: 55 %
+2024-11-10 15:00:53,519 - RPI-Temperature-Monitor - INFO - Temperature: 20 C, Humidity: 55 %
+2024-11-10 15:00:58,745 - RPI-Temperature-Monitor - INFO - Temperature: 20 C, Humidity: 55 %
+2024-11-10 15:01:04,197 - RPI-Temperature-Monitor - INFO - Temperature: 20 C, Humidity: 55 %
+2024-11-10 15:01:09,426 - RPI-Temperature-Monitor - INFO - Temperature: 20 C, Humidity: 55 %
+2024-11-10 15:01:14,655 - RPI-Temperature-Monitor - INFO - Temperature: 20 C, Humidity: 55 %
+2024-11-10 15:01:19,883 - RPI-Temperature-Monitor - INFO - Temperature: 20 C, Humidity: 55 %
+2024-11-10 15:01:25,333 - RPI-Temperature-Monitor - INFO - Temperature: 20 C, Humidity: 55 %
+2024-11-10 15:01:30,562 - RPI-Temperature-Monitor - INFO - Temperature: 20 C, Humidity: 55 %
+2024-11-10 15:01:36,013 - RPI-Temperature-Monitor - INFO - Temperature: 20 C, Humidity: 55 %
