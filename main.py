@@ -1,140 +1,264 @@
-import asyncio
-from grove.factory import Factory
-from proxmoxer import ProxmoxAPI
-import seeed_dht
-import yaml
 import logging
-from flask import Flask, jsonify
-import threading
+import os
+import sys
+import time
 import requests
+from flask import Flask, request, jsonify
+from proxmoxer import ProxmoxAPI
 import thingspeak
-
-# Logging
-logger = logging.getLogger("RPI-Temperature-Monitor")
-logger.setLevel(logging.INFO)
-formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-file_handler = logging.FileHandler('main.log')
-file_handler.setFormatter(formatter)
-logger.addHandler(file_handler)
-
-# Load configuration from config.yml
-with open("config.yml", "r") as config_file:
-    config = yaml.safe_load(config_file)
-    # Proxmox
-    proxmox_config = config['proxmox']
-    
-    # Temperature
-    temperature_config = config['temperature']
-    
-    # Web Server
-    web_config = config['web']
-    port = web_config['port']
-    # Thingspeak
-    thingspeak_config = config['thingspeak']
-    enabled_thingspeak = thingspeak_config['enabled']
-    temp_channel_id = thingspeak_config['temp_channel_id']
-try:
-    # LCD 16x2 Characters
-    lcd = Factory.getDisplay("JHD1802")
-    rows, cols = lcd.size()
-    lcd.clear()
-except OSError as e:
-    logger.error(f"Failed to initialize LCD display: {e}")
-    lcd = None  # Fallback in case LCD fails
+import serial
+import json
+import sqlite3
 
 
-# Proxmox
-proxmox_connected = False
+def read_config():
+    import yaml
+    try:
+        with open('config.yaml', 'r') as config_file:
+            config = yaml.safe_load(config_file)
+            return config
+    except Exception as e:
 
+        default_config = {'database': {'file_path': 'temperature_data.db'}, 'logging': {'file_path': 'app.log', 'level': 'INFO', 'log_temperature': False, 'log_temperature_no_db': True, 'log_thingspeak': False}, 'arduino': {'windows_port': 'COM3', 'unix_like_port': '/dev/ttyACM0', 'unknown_port': '/dev/ttyACM0', 'baud_rate': 9600}, 'web': {'port': 5050, 'address': '0.0.0.0'}, 'enabled_modules': ['web', 'database']}
+        print(f"Error in reading the config file, creating new config.yaml. error: {e}")
 
-# Lock for sensor access
-sensor_lock = threading.Lock()
-
-def read_temp():
-    with sensor_lock:
-        sensor = seeed_dht.DHT("11", 12)
-        humidity, temperature = sensor.read()
-    return temperature, humidity
-
+        try:
+            with open('config.yaml', 'w') as config_file:
+                yaml.dump(default_config, config_file)
+        except Exception as e:
+            print(f"Error in creating the config file, continuing from memory without persistence: {e}")
+            default_config = {'database': {'file_path': 'temperature_data.db'},
+                              'logging': {'file_path': 'app.log', 'level': 'INFO',
+                                          'log_temperature_no_db': True, 'log_thingspeak': False},
+                              'arduino': {'windows_port': 'COM3', 'unix_like_port': '/dev/ttyACM0',
+                                          'unknown_port': '/dev/ttyACM0', 'baud_rate': 9600},
+                              'web': {'port': 5050, 'address': '0.0.0.0'}, 'enabled_modules': ['web']}
+        finally:
+            return default_config
 app = Flask(__name__)
 
-@app.route('/temperature', methods=['GET'])
-def get_temperature():
-    temperature, humidity = read_temp()
-    return jsonify({'temperature': temperature, 'humidity': humidity})
+# Configure logging
+logging.basicConfig(level=read_config()['logging']['level'],
+                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+                    handlers=[
+                        logging.FileHandler(read_config()['logging']['file_path']),
+                        logging.StreamHandler()
+                    ])
 
-def display_text(line, text):
-    if line < 0 or line >= rows:
-        raise ValueError("Line number must be between 0 and {}".format(rows - 1))
-    lcd.setCursor(line, 0)
-    lcd.write(text)
+logger = logging.getLogger("main")
 
-async def display_temp_info(update_delay):
-    while True:
-        temperature, humidity = read_temp()
-        logger.info(f"Temperature: {temperature} C, Humidity: {humidity} %")
-        if lcd:
-            display_text(0, f"Temp: {temperature}C")
-            display_text(1, f"Humidity: {humidity} %")
-        
-        await asyncio.sleep(update_delay)
+flask_logger = logging.getLogger('werkzeug')
+flask_logger.setLevel(logging.INFO)
+flask_logger.handlers = logger.handlers
 
-async def proxmox_temp_monitor(check_delay):
-    enabled_proxmox = proxmox_config['enabled']
-    server_ip = proxmox_config['server_ip']
-    username = proxmox_config['username']
-    password = proxmox_config['password']
-    verify_ssl = proxmox_config['verify_ssl']
-    node = proxmox_config['node']
-    if enabled_proxmox:
+def check_os():
+    import os
+    if os.name == 'nt':
+        return 'windows'
+    elif os.name == 'posix':
+        return 'unix-like'
+    else:
+        return 'unknown'
+
+def init_db():
+    try:
+        conn = sqlite3.connect("temperature_data.db")
+        cursor = conn.cursor()
+        cursor.execute("""
+                CREATE TABLE IF NOT EXISTS temperature_logs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp TEXT NOT NULL,
+                    temperature REAL NOT NULL,
+                    humidity REAL NOT NULL,
+                    status TEXT NOT NULL
+                )
+            """)
+        conn.commit()
+        conn.close()
+        logger.info("Database created successfully.")
+    except Exception as e:
+        logger.error(f"Error in creating the database: {e}")
+        return
+
+def save_temperature_to_db(temperature, humidity, status):
+    try:
+        conn = sqlite3.connect("temperature_data.db")
+        cursor = conn.cursor()
+        cursor.execute("""
+                INSERT INTO temperature_logs (timestamp, temperature, humidity, status)
+                VALUES (datetime('now'), ?, ?, ?)
+            """, (temperature, humidity, status))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        logger.error(f"Error in saving the temperature data to the database: {e}")
+        return
+
+def send_data_to_thingspeak(temperature, humidity, status, channel_id):
+    with open("thingspeak.secret", "r") as thingspeak_secret:
+        thingspeak_api_key = thingspeak_secret.read().strip()
+        channel = thingspeak.Channel(id=channel_id, api_key=thingspeak_api_key)
+        if temperature is None or humidity is None or status is None:
+            logger.error("Seen data is None, not sending to thingspeak.")
+            logger.error(f"Temperature: {temperature}, Humidity: {humidity}, Status: {status}")
+        else:
+            try:
+                channel.update({'field1': temperature, 'field2': humidity})
+                if read_config()['logging']['log_thingspeak']:
+                    logger.info(f"Temperature: {temperature}, Humidity: {humidity} sent to thingspeak.")
+
+            except Exception as e:
+                logger.error(f"Error in sending data to thingspeak: {e}")
+
+def shutdown_all_hosts():
+    # Create a connection to the proxmox server.
+    with open("proxmox.secret", "r") as proxmox_secret:
+        proxmox_password = proxmox_secret.read().strip()
         try:
-            proxmox = ProxmoxAPI(server_ip, user=username, password=password, verify_ssl=verify_ssl)
-            proxmox_connected = True
-            logger.info("Successfully connected to proxmox, connected features enabled!")
+            proxmox = ProxmoxAPI(
+                read_config()['proxmox']['server_ip'],
+                user=read_config()['proxmox']['username'],
+                password=proxmox_password,
+                verify_ssl=read_config()['proxmox']['verify_ssl']
+            )
+
+            # Get the list of all the nodes.
+            nodes = proxmox.nodes.get()
+            for i in nodes:
+                logger.info(f"Shutting down the node: {i['node']}")
+                # Shutdown the node.
+                proxmox.nodes(i['node']).status.post(command='shutdown')
+
         except Exception as e:
-            logger.error(f"Failed to connect to Proxmox: {e}")
-            logger.error("Connected features unavailable!")
-        while True:
-            temperature, humidity = read_temp()
-            if proxmox_connected:
-                max_temp = temperature_config['limit']
-                if temperature > max_temp:
-                    logger.error(f"Temperature is above {max_temp} C, Shutting down node {node}")
-                try:
-                    proxmox.nodes(node).status.shutdown.post()
-                    logger.info(f"Shutdown command sent to node {node}")
-                    break
-                except Exception as e:
-                    logger.error(f"Failed to send shutdown command to Proxmox node {node}: {e}")
-        await asyncio.sleep(check_delay)
+            logger.error(f"Error in connecting to the proxmox server: {e}")
+            return
+        finally:
+            logger.info('All the nodes have been shutdown successfully (If online).')
+            return
 
-async def send_temp_to_thingspeak(update_delay):
-    if enabled_thingspeak:
-        with open("thingspeak.secret", "r") as thingspeak_secret:
-            thingspeak_api_key = thingspeak_secret.read().strip()
-            temp_ch = thingspeak.Channel(id = temp_channel_id, api_key=thingspeak_api_key)
-            while True:
-                temperature, humidity = read_temp()
-                try:
-                    
-                    temp_ch.update({'field1': temperature, 'field2': humidity})
-                    logger.info(f"Temperature and humidity sent to Thingspeak")
-                except requests.RequestException as e:
-                    logger.error(f"Failed to send data to Thingspeak: {e}")
-                await asyncio.sleep(update_delay)
-        
+def init_serial():
+    serial_connection = serial.Serial()
+    serial_connection.baudrate = 9600
+    if check_os() == 'windows':
+        serial_connection.port = read_config()['arduino']['windows_port']
+    elif check_os() == 'unix-like':
+        serial_connection.port = read_config()['arduino']['unix_like_port']
 
-async def main():
-    await asyncio.gather(display_temp_info(5), proxmox_temp_monitor(5), send_temp_to_thingspeak(60))
+    serial_connection.timeout = 10
 
-def run_flask_app():
-    app.run(host='0.0.0.0', port=port)
+    while True:
+        try:
+            serial_connection.open()
+            return serial_connection
+        except serial.SerialException:
+            logger.error('Error in opening the serial connection, retrying in 2 seconds.')
+            time.sleep(2)
+
+def send_data(data):
+    serial_connection = init_serial()
+    serial_connection.write(data.encode('utf-8'))
+    return
+
+def read_data():
+    serial_connection = init_serial()
+    try:
+        data = serial_connection.readline().decode('utf-8')
+    except UnicodeDecodeError:
+        logger.error('Error in decoding the data')
+        return {'temperature': 0, 'humidity': 0, 'status': 'error'}
+
+
+    # Decode the data from json to components.
+    try :
+        data_dict = json.loads(data)
+        return data_dict
+    except json.JSONDecodeError:
+        logger.error(f"Error in decoding the data: {data}")
+        return {'temperature': 0, 'humidity': 0, 'status': 'error'}
+@app.route('/', methods=['GET'])
+def get_sensor_data():
+    data = read_data()
+    return jsonify(data)
+
+@app.route('/temp', methods=['POST'])
+def send_temp_to_arduino():
+    data = request.json
+    temperature = data['temperature']
+    if temperature is None:
+        return jsonify({'message': 'Temperature is not provided.'}), 400
+    if temperature == 'reset':
+        send_data('DHT')
+        logger.info('The arduino is now using real data')
+        return jsonify({'message': 'The arduino is now using real data.'})
+    if not isinstance(temperature, int):
+        return jsonify({'message': 'Temperature should be an integer.'}),400
+    if temperature < 0 or temperature > 99:
+        return jsonify({'message': 'Temperature should be between 0 and 99'}), 400
+
+    send_data(f'temp {temperature}')
+    logger.info(f"Temperature: {temperature} sent to the arduino.")
+    return jsonify({'message': 'Temperature sent to the arduino.'})
+
+def main():
+    config = read_config()
+    logger.info(f"Enabled Modules: {config['enabled_modules']}")
+    logger.log(logging.INFO, f"OS: {check_os()}")
+    if "database" in config['enabled_modules']:
+        logger.info('Initializing the database.')
+        init_db()
+    else:
+        logger.debug("Database service is not enabled in the config file.")
+
+    logger.info('Starting the program.')
+
+    while True:
+        data = read_data()
+
+        temperature = data['temperature']
+        humidity = data['humidity']
+        status = data['status']
+        if "database" in config['enabled_modules']:
+            if config['logging']['log_temperature']:
+                logger.info(f"Temperature: {temperature}, Humidity: {humidity}, Status: {status}")
+            save_temperature_to_db(temperature, humidity, status)
+
+        else:
+            if config['logging']['log_temperature_no_db']:
+                logger.info(f"Temperature: {temperature}, Humidity: {humidity}, Status: {status}")
+
+
+
+        if "thingspeak" in config['enabled_modules'] and os.path.exists("thingspeak.secret"):
+            send_data_to_thingspeak(temperature, humidity, status, read_config()['thingspeak']['channel_id'])
+        else:
+            logger.debug("Thingspeak service is not enabled in the config file or no thingspeak.secret file.")
+
+        if status == 'HIGH':
+            logger.warning(f"Temperature({temperature}) is high")
+            if "proxmox" in config['enabled_modules'] and os.path.exists("proxmox.secret"):
+                shutdown_all_hosts()
+                break
+            else:
+                logger.debug("Proxmox service is not enabled in the config file or no proxmox.secret file.")
+
+
+        time.sleep(5)
+
+    logger.info('Exiting the program.')
+    sys.exit(0)
+
+def run_main_thread_in_background():
+    import threading
+    thread = threading.Thread(target=main, daemon=True)
+    thread.start()
 
 if __name__ == '__main__':
-    flask_thread = threading.Thread(target=run_flask_app)
-    flask_thread.start()
-    
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(main())
+    if "web" in read_config()['enabled_modules']:
+        logger.info('Starting the web server.')
+        run_main_thread_in_background()
+        app.run(debug=False, use_reloader=False, port=read_config()['web']['port'], host=read_config()['web']['address'])
+    else:
+        logger.debug('Starting without the web server.')
+        main()
 
-    
+
