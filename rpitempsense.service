@@ -1,5 +1,5 @@
 [Unit]
-Description=Run Python Script
+Description=Systemd entrypoint for rpitempsense
 After=network.target
 
 [Service]

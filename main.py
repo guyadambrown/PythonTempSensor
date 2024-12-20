@@ -19,7 +19,12 @@ def read_config():
             return config
     except Exception as e:
 
-        default_config = {'database': {'file_path': 'temperature_data.db'}, 'logging': {'file_path': 'app.log', 'level': 'INFO', 'log_temperature': False, 'log_temperature_no_db': True, 'log_thingspeak': False}, 'arduino': {'windows_port': 'COM3', 'unix_like_port': '/dev/ttyACM0', 'unknown_port': '/dev/ttyACM0', 'baud_rate': 9600}, 'web': {'port': 5050, 'address': '0.0.0.0'}, 'enabled_modules': ['web', 'database']}
+        default_config = {
+            'database': {'file_path': 'temperature_data.db'},
+            'logging': {'file_path': 'app.log', 'level': 'INFO', 'log_temperature': False, 'log_temperature_no_db': True, 'log_thingspeak': False},
+            'arduino': {'windows_port': 'COM3', 'unix_like_port': '/dev/ttyACM0', 'unknown_port': '/dev/ttyACM0', 'baud_rate': 9600, 'poll_interval': 5},
+            'web': {'port': 5050, 'address': '0.0.0.0'},
+            'enabled_modules': ['web', 'database']}
         print(f"Error in reading the config file, creating new config.yaml. error: {e}")
 
         try:
@@ -27,23 +32,26 @@ def read_config():
                 yaml.dump(default_config, config_file)
         except Exception as e:
             print(f"Error in creating the config file, continuing from memory without persistence: {e}")
-            default_config = {'database': {'file_path': 'temperature_data.db'},
-                              'logging': {'file_path': 'app.log', 'level': 'INFO',
-                                          'log_temperature_no_db': True, 'log_thingspeak': False},
-                              'arduino': {'windows_port': 'COM3', 'unix_like_port': '/dev/ttyACM0',
-                                          'unknown_port': '/dev/ttyACM0', 'baud_rate': 9600},
-                              'web': {'port': 5050, 'address': '0.0.0.0'}, 'enabled_modules': ['web']}
+            default_config = {
+                'database': {'file_path': 'temperature_data.db'},
+                'logging': {'file_path': 'app.log', 'level': 'INFO', 'log_temperature_no_db': True, 'log_thingspeak': False},
+                'arduino': {'windows_port': 'COM3', 'unix_like_port': '/dev/ttyACM0', 'unknown_port': '/dev/ttyACM0', 'baud_rate': 9600, 'poll_interval': 5},
+                'web': {'port': 5050, 'address': '0.0.0.0'},
+                'enabled_modules': ['web']
+            }
         finally:
             return default_config
 app = Flask(__name__)
 
 # Configure logging
-logging.basicConfig(level=read_config()['logging']['level'],
-                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-                    handlers=[
-                        logging.FileHandler(read_config()['logging']['file_path']),
-                        logging.StreamHandler()
-                    ])
+logging.basicConfig(
+    level=read_config()['logging']['level'],
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler(read_config()['logging']['file_path']),
+        logging.StreamHandler()
+    ]
+)
 
 logger = logging.getLogger("main")
 
@@ -203,6 +211,7 @@ def main():
     config = read_config()
     logger.info(f"Enabled Modules: {config['enabled_modules']}")
     logger.log(logging.INFO, f"OS: {check_os()}")
+    logger.info(f'Polling rate: {config["arduino"]["poll_interval"]} seconds')
     if "database" in config['enabled_modules']:
         logger.info('Initializing the database.')
         init_db()
@@ -220,7 +229,11 @@ def main():
         if "database" in config['enabled_modules']:
             if config['logging']['log_temperature']:
                 logger.info(f"Temperature: {temperature}, Humidity: {humidity}, Status: {status}")
-            save_temperature_to_db(temperature, humidity, status)
+            save_temperature_to_db(
+                temperature,
+                humidity,
+                status
+            )
 
         else:
             if config['logging']['log_temperature_no_db']:
@@ -242,21 +255,30 @@ def main():
                 logger.debug("Proxmox service is not enabled in the config file or no proxmox.secret file.")
 
 
-        time.sleep(5)
+        time.sleep(config['arduino']['poll_interval'])
 
     logger.info('Exiting the program.')
     sys.exit(0)
 
 def run_main_thread_in_background():
     import threading
-    thread = threading.Thread(target=main, daemon=True)
+    thread = threading.Thread(
+        target=main,
+        daemon=True
+    )
     thread.start()
 
 if __name__ == '__main__':
     if "web" in read_config()['enabled_modules']:
         logger.info('Starting the web server.')
         run_main_thread_in_background()
-        app.run(debug=False, use_reloader=False, port=read_config()['web']['port'], host=read_config()['web']['address'])
+        app.run(
+            debug=False,
+            use_reloader=False,
+            port=read_config()['web']['port'],
+            host=read_config()['web']['address']
+
+        )
     else:
         logger.debug('Starting without the web server.')
         main()

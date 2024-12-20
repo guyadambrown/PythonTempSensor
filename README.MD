@@ -40,7 +40,18 @@ python temp_monitor.py
 ## Usage
 - Run the script
 - The script will generate a ```config.yaml``` and a ```temperature_data.db``` file if it does not exist
-- The script will start monitoring the temperature data over serial and record it to the database while presenting it to over a web api at ```http://localhost:5050/temperature```
+- The script will start monitoring the temperature data over serial and record it to the database while presenting it to over a web api at ```http://localhost:5050/temp```
+- Custom temperatures can be set by sending a POST request to ```http://localhost:5050/temp``` with the desired temperature in the body (0-99) or by sending a POST request with the body ```{"reset"}``` to reset the temperature.
+
+## Example API testing commands
+- Set the temperature to 50
+```bash
+curl -X POST http://localhost:5050/temp -H "Content-Type: application/json" -d '{"temperature": 50}'
+```
+- Reset the temperature
+```bash
+curl -X POST http://localhost:5050/temp -H "Content-Type: application/json" -d '{"temperature": "reset"}'
+```
 
 ## Configuration
 The script will use the default settings in the config.yaml file if it is not found. The default settings are as follows, please check if the serial port is correct for your system:
@@ -60,6 +71,7 @@ arduino:
   unix_like_port: /dev/ttyACM0
   unknown_port: /dev/ttyACM0
   baud_rate: 9600
+  poll_interval: 5
 
 web:
   port: 5050
@@ -70,6 +82,8 @@ enabled_modules:
   - database
 
 ```
+
+
 
 ## License
 [MIT](https://choosealicense.com/licenses/mit/)
