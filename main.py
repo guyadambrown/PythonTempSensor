@@ -1,24 +1,23 @@
+import json
 import logging
 import os
 import sys
+import threading
 import time
-import requests
+import serial
 from flask import Flask, request, jsonify
 from proxmoxer import ProxmoxAPI
-import thingspeak
-import serial
-import json
 import sqlite3
-
+import yaml
+import thingspeak
 
 def read_config():
-    import yaml
+
     try:
         with open('config.yaml', 'r') as config_file:
             config = yaml.safe_load(config_file)
             return config
     except Exception as e:
-
         default_config = {
             'database': {'file_path': 'temperature_data.db'},
             'logging': {'file_path': 'app.log', 'level': 'INFO', 'log_temperature': False, 'log_temperature_no_db': True, 'log_thingspeak': False},
@@ -60,7 +59,6 @@ flask_logger.setLevel(logging.INFO)
 flask_logger.handlers = logger.handlers
 
 def check_os():
-    import os
     if os.name == 'nt':
         return 'windows'
     elif os.name == 'posix':
@@ -90,6 +88,7 @@ def init_db():
 
 def save_temperature_to_db(temperature, humidity, status):
     try:
+
         conn = sqlite3.connect("temperature_data.db")
         cursor = conn.cursor()
         cursor.execute("""
@@ -119,6 +118,7 @@ def send_data_to_thingspeak(temperature, humidity, status, channel_id):
                 logger.error(f"Error in sending data to thingspeak: {e}")
 
 def shutdown_all_hosts():
+
     # Create a connection to the proxmox server.
     with open("proxmox.secret", "r") as proxmox_secret:
         proxmox_password = proxmox_secret.read().strip()
@@ -261,7 +261,6 @@ def main():
     sys.exit(0)
 
 def run_main_thread_in_background():
-    import threading
     thread = threading.Thread(
         target=main,
         daemon=True
