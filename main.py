@@ -191,21 +191,26 @@ def get_sensor_data():
 @app.route('/temp', methods=['POST'])
 def send_temp_to_arduino():
     data = request.json
-    temperature = data['temperature']
-    if temperature is None:
-        return jsonify({'message': 'Temperature is not provided.'}), 400
-    if temperature == 'reset':
-        send_data('DHT')
-        logger.info('The arduino is now using real data')
-        return jsonify({'message': 'The arduino is now using real data.'})
-    if not isinstance(temperature, int):
-        return jsonify({'message': 'Temperature should be an integer.'}),400
-    if temperature < 0 or temperature > 99:
-        return jsonify({'message': 'Temperature should be between 0 and 99'}), 400
+    if read_config()['web']['commands_enabled'] is False:
+        return jsonify({'message': 'Commands are disabled.'}), 418
+    else:
+        temperature = data['temperature']
+        if temperature is None:
+            return jsonify({'message': 'Temperature is not provided.'}), 400
+        if temperature == 'reset':
+            send_data('DHT')
+            logger.info('The arduino is now using real data')
+            return jsonify({'message': 'The arduino is now using real data.'})
+        if not isinstance(temperature, int):
+            return jsonify({'message': 'Temperature should be an integer.'}), 400
+        if temperature < 0 or temperature > 99:
+            return jsonify({'message': 'Temperature should be between 0 and 99'}), 400
 
-    send_data(f'temp {temperature}')
-    logger.info(f"Temperature: {temperature} sent to the arduino.")
-    return jsonify({'message': 'Temperature sent to the arduino.'})
+        send_data(f'temp {temperature}')
+        logger.info(f"Temperature: {temperature} sent to the arduino.")
+        return jsonify({'message': 'Temperature sent to the arduino.'})
+
+
 
 def main():
     config = read_config()
